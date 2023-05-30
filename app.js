@@ -1,12 +1,16 @@
 // //jshint esversion:6
 require("dotenv").config();
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const app = express();
 const port = 3000;
 const mongoose = require("mongoose");
-const encrypt = require("mongoose-encryption");
+// const encrypt = require("mongoose-encryption");
+// const md5 = require("md5");
+const bcrypt = require("bcrypt");
+const saltRounds = 10;
 
 app.use(express.static("public"));
 app.set("view engine", "ejs");
@@ -24,12 +28,12 @@ const userSchema = new mongoose.Schema({
   password: String,
 });
 
-// Encryption
+// Encryption mongoose-encryption
 
-userSchema.plugin(encrypt, {
-  secret: process.env.SECRET_KEY,
-  encryptedFields: ["password"],
-});
+// userSchema.plugin(encrypt, {
+//   secret: process.env.SECRET_KEY,
+//   encryptedFields: ["password"],
+// });
 //
 
 const User = new mongoose.model("User", userSchema);
@@ -48,28 +52,38 @@ app.get("/register", (req, res) => {
 
 //// The register route and only will render the secrets
 app.post("/register", async (req, res) => {
-  try {
-    const newUser = new User({
-      email: req.body.username,
-      password: req.body.password,
-    });
+  bcrypt.hash(req.body.password, saltRounds, function (err, hash) {
+    try {
+      const newUser = new User({
+        email: req.body.username,
+        password: hash, // md5(req.body.password),
+      });
 
-    await newUser.save();
-    res.render("secrets");
-  } catch (err) {
-    console.log(err);
-  }
+      newUser.save();
+      res.render("secrets");
+    } catch (err) {
+      console.log(err);
+    }
+  });
 });
 
 app.post("/login", async (req, res) => {
   const username = req.body.username;
-  const password = req.body.password;
+  const password = req.body.password; //md5(req.body.password);
   User.findOne({ email: username })
     .then((foundUser) => {
       if (foundUser) {
-        if (foundUser.password === password) {
-          res.render("secrets");
-        }
+        bcrypt.compare(password, foundUser.password, function (err, result) {
+          if (result === true) {
+            res.render("secrets");
+          } else {
+            // Password comparison failed
+            res.status(401).send("Incorrect password");
+          }
+        });
+      } else {
+        // User not found
+        res.status(404).send("User not found");
       }
     })
     .catch((err) => {
