@@ -7,10 +7,13 @@ const ejs = require("ejs");
 const app = express();
 const port = 3000;
 const mongoose = require("mongoose");
+const session = require("express-session");
+const passport = require("passport");
+const passportLocalMongoose = require("passport-local-mongoose");
 // const encrypt = require("mongoose-encryption");
 // const md5 = require("md5");
-const bcrypt = require("bcrypt");
-const saltRounds = 10;
+// const bcrypt = require("bcrypt");
+// const saltRounds = 10;
 
 app.use(express.static("public"));
 app.set("view engine", "ejs");
@@ -20,14 +23,6 @@ app.use(
   })
 );
 
-mongoose.connect("mongodb://localhost:27017/userDB", { useNewUrlParser: true });
-
-// Mongoose schema
-const userSchema = new mongoose.Schema({
-  email: String,
-  password: String,
-});
-
 // Encryption mongoose-encryption
 
 // userSchema.plugin(encrypt, {
@@ -36,7 +31,39 @@ const userSchema = new mongoose.Schema({
 // });
 //
 
+// Set up session
+app.use(
+  session({
+    secret: "Our little secret.",
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+
+// Init passport and use it to manage session
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Connect db with the localserver
+mongoose.connect("mongodb://localhost:27017/userDB", { useNewUrlParser: true });
+
+// Mongoose schema
+const userSchema = new mongoose.Schema({
+  email: String,
+  password: String,
+});
+
+// Use schema to use it as a plugin
+userSchema.plugin(passportLocalMongoose);
+
 const User = new mongoose.model("User", userSchema);
+
+// use passportLocalMongoose to create a local strategy
+passport.use(User.createStrategy());
+
+// serialize and deserialize
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
 app.get("/", (req, res) => {
   res.render("home");
@@ -50,46 +77,54 @@ app.get("/register", (req, res) => {
   res.render("register");
 });
 
-//// The register route and only will render the secrets
-app.post("/register", async (req, res) => {
-  bcrypt.hash(req.body.password, saltRounds, function (err, hash) {
-    try {
-      const newUser = new User({
-        email: req.body.username,
-        password: hash, // md5(req.body.password),
-      });
-
-      newUser.save();
-      res.render("secrets");
-    } catch (err) {
-      console.log(err);
-    }
-  });
+app.get("/secrets", (req, res) => {
+  if (req.isAuthenticated()) {
+    res.render("secrets");
+  } else {
+    res.redirect("/login");
+  }
 });
 
-app.post("/login", async (req, res) => {
-  const username = req.body.username;
-  const password = req.body.password; //md5(req.body.password);
-  User.findOne({ email: username })
-    .then((foundUser) => {
-      if (foundUser) {
-        bcrypt.compare(password, foundUser.password, function (err, result) {
-          if (result === true) {
-            res.render("secrets");
-          } else {
-            // Password comparison failed
-            res.status(401).send("Incorrect password");
-          }
-        });
+// Add Logout route
+app.get("/logout", (req, res) => {
+  req.logout();
+  res.redirect("/");
+});
+
+////////////  The register route ////////////
+app.post("/register", async (req, res) => {
+  User.register(
+    { username: req.body.username },
+    req.body.password,
+    (err, user) => {
+      if (err) {
+        console.log(err);
+        res.redirect("/register");
       } else {
-        // User not found
-        res.status(404).send("User not found");
+        passport.authenticate("local")(req, res, () => {
+          res.redirect("/secrets");
+        });
       }
-    })
-    .catch((err) => {
-      console.error(err); // Handle the error here
-      res.status(500).send("Internal Server Error");
-    });
+    }
+  );
+});
+
+///////////// The login route //////////////
+app.post("/login", async (req, res) => {
+  const user = new User({
+    username: req.body.username,
+    password: req.body.password,
+  });
+
+  req.login(user, (err) => {
+    if (err) {
+      console.log(err);
+    } else {
+      passport.authenticate("local")(req, res, () => {
+        res.redirect("/secrets");
+      });
+    }
+  });
 });
 
 app.listen(port, () => {
